@@ -1,0 +1,147 @@
+import numpy as np
+import tkinter as tk
+from PIL import Image, ImageGrab
+
+
+def activation_function(x):
+    # Функция активации (сигмоида)
+    return 1 / (1 + np.exp(-x))
+
+
+class Network:
+    def __init__(self, input_nodes, hidden_nodes, output_nodes, learning_rate):
+        # Инициализация параметров сети
+        self.input_nodes = input_nodes
+        self.hidden_nodes = hidden_nodes
+        self.output_nodes = output_nodes
+        self.learning_rate = learning_rate
+
+        # Инициализация весов сети случайными значениями в диапазоне [-0.5, 0.5)
+        self.weights_input_hidden = np.random.rand(self.hidden_nodes, self.input_nodes) - 0.5
+        self.weights_hidden_output = np.random.rand(self.output_nodes, self.hidden_nodes) - 0.5
+
+    def train(self, network_inputs, network_output_targets):
+        # Обучение сети
+        input_layer_outputs = np.array(network_inputs, ndmin=2).T
+
+        hidden_layer_inputs = np.dot(self.weights_input_hidden, input_layer_outputs)
+        hidden_layer_outputs = activation_function(hidden_layer_inputs)
+
+        output_layer_inputs = np.dot(self.weights_hidden_output, hidden_layer_outputs)
+        output_layer_outputs = activation_function(output_layer_inputs)
+        output_layer_output_targets = np.array(network_output_targets, ndmin=2).T
+
+        output_layer_errors = output_layer_output_targets - output_layer_outputs
+        hidden_layer_errors = np.dot(self.weights_hidden_output.T, output_layer_errors)
+
+        self.weights_hidden_output += self.learning_rate * np.dot(
+            output_layer_errors * output_layer_outputs * (1 - output_layer_outputs),
+            hidden_layer_outputs.T
+        )
+        self.weights_input_hidden += self.learning_rate * np.dot(
+            hidden_layer_errors * hidden_layer_outputs * (1 - hidden_layer_outputs),
+            input_layer_outputs.T
+        )
+
+    def query(self, network_inputs):
+        # Запрос значений от обученной сети
+        input_layer_outputs = np.array(network_inputs, ndmin=2).T
+
+        hidden_layer_inputs = np.dot(self.weights_input_hidden, input_layer_outputs)
+        hidden_layer_outputs = activation_function(hidden_layer_inputs)
+
+        output_layer_inputs = np.dot(self.weights_hidden_output, hidden_layer_outputs)
+        output_layer_outputs = activation_function(output_layer_inputs)
+
+        return output_layer_outputs.flatten()
+
+
+class ArrowData:
+    def __init__(self, normalized_data, target):
+        self.normalized_data = normalized_data
+        self.target = target
+
+
+class DrawingApp:
+    def __init__(self, root, nn):
+        self.root = root
+        self.nn = nn
+        self.canvas = tk.Canvas(self.root, width=300, height=300, bg='white')
+        self.canvas.pack()
+        self.canvas.bind("<B1-Motion>", self.draw)
+        self.label = tk.Label(self.root, text="Нарисуйте стрелку и нажмите 'Распознать' или 'Обучить'")
+        self.label.pack()
+        self.recognize_button = tk.Button(self.root, text="Распознать", command=self.recognize)
+        self.recognize_button.pack()
+
+        self.train_button = tk.Button(self.root, text="Обучить", command=self.train)
+        self.train_button.pack()
+
+        self.clear_button = tk.Button(self.root, text="Очистить", command=self.clear_canvas)
+        self.clear_button.pack()
+
+        self.arrows_data = []  # Инициализация списка для данных о стрелках
+
+    def draw(self, event):
+        # Рисование стрелки на canvas
+        x1, y1 = (event.x - 5), (event.y - 5)
+        x2, y2 = (event.x + 5), (event.y + 5)
+        self.canvas.create_oval(x1, y1, x2, y2, fill='black')
+
+    def recognize(self):
+        # Распознавание стрелки
+        x = self.root.winfo_rootx() + self.canvas.winfo_x()
+        y = self.root.winfo_rooty() + self.canvas.winfo_y()
+        x1 = x + self.canvas.winfo_width()
+        y1 = y + self.canvas.winfo_height()
+        ImageGrab.grab().crop((x, y, x1, y1)).save("arrow.png")
+        img = Image.open("arrow.png").resize((10, 10)).convert("L")
+        data = np.array(img)
+        normalized_data = data / 255.0 * 0.99 + 0.01
+        flattened_data = normalized_data.flatten()
+        output = self.nn.query(flattened_data)
+        recognized_symbol = np.argmax(output)
+
+        symbols = ["↑", "↗", "→", "↘", "↓", "↙", "←", "↖", "юго-запад"]
+        print("Распознанный символ:", symbols[recognized_symbol])
+
+        # Добавление данных о нарисованной стрелке в обучающий набор
+        arrow_data = ArrowData(flattened_data, recognized_symbol)
+        self.arrows_data.append(arrow_data)
+
+    def train(self):
+        # Обучение сети нарисованным стрелкам
+        if not self.arrows_data:
+            print("Нарисуйте стрелку для обучения.")
+            return
+
+        training_inputs = [arrow.normalized_data for arrow in self.arrows_data]
+        training_targets = [arrow.target for arrow in self.arrows_data]
+
+        for i in range(len(training_inputs)):
+            self.nn.train(training_inputs[i], training_targets[i])
+
+    def clear_canvas(self):
+        # Очистка canvas
+        self.canvas.delete("all")
+        self.arrows_data = []
+
+
+def main():
+    input_nodes = 100
+    hidden_nodes = 50
+    output_nodes = 9
+    learning_rate = 0.2
+
+    nn = Network(input_nodes, hidden_nodes, output_nodes, learning_rate)
+
+    root = tk.Tk()
+    root.title("Распознавание стрелок")
+
+    DrawingApp(root, nn)
+
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
